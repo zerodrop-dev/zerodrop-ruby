@@ -1,0 +1,36 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    name: Build & Lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ruby: ["3.0", "3.2", "3.4"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+
+      - name: Syntax check
+        run: ruby -c lib/zerodrop.rb && ruby -c lib/zerodrop/version.rb
+
+      - name: Build gem
+        run: gem build zerodrop.gemspec
+
+      - name: Smoke test
+        run: |
+          ruby -Ilib -e '
+            require "zerodrop"
+            mail = ZeroDrop::Client.new
+            inbox = mail.generate_inbox
+            raise "bad inbox: #{inbox}" unless inbox =~ /\A[a-z]+-[a-z0-9]{7}@zerodrop-sandbox\.online\z/
+            f = ZeroDrop::Filter.new(has_otp: true)
+            email = ZeroDrop::Email.new(otp: "123456", from: "a@b.c")
+            raise "filter broken" unless f.matches?(email)
+            puts "smoke test passed: #{inbox}"
+          '
