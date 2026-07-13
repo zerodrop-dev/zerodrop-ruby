@@ -9,7 +9,8 @@ jobs:
     name: Build & Push Gem
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -17,10 +18,5 @@ jobs:
         with:
           ruby-version: "3.2"
 
-      - name: Build gem
-        run: gem build zerodrop.gemspec
-
-      - name: Push to RubyGems
-        env:
-          GEM_HOST_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}
-        run: gem push zerodrop-*.gem
+      - name: Publish via trusted publishing
+        uses: rubygems/release-gem@v1
