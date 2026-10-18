@@ -126,6 +126,21 @@ visit email.magic_link
 expect(page).to have_current_path("/dashboard")
 ```
 
+## Free API key (private inboxes)
+
+Without a key, anyone who knows an inbox's name can read it. With a free key, your inboxes start with your own prefix and only your key can read them.
+
+1. Sign in with GitHub at [zerodrop.dev/keys](https://zerodrop.dev/keys) and create a key.
+2. Set it as `ZERODROP_API_KEY`. The client reads it automatically, or you can pass `api_key:`.
+
+```ruby
+mail = ZeroDrop::Client.new   # reads ZERODROP_API_KEY when it's set
+mail.generate_inbox
+# => "k7x2-swift-x7k29ab@zerodrop-sandbox.online", where k7x2 is your prefix
+```
+
+Reading a `k7x2-…` inbox without your key raises `ZeroDrop::AuthError` with the reason. `mail.prefix` holds your prefix if you build an address yourself. A key holding a character that can't be sent in an HTTP header (a line break, a byte-order mark) makes `ZeroDrop::Client.new` raise `ArgumentError`; the message never includes the key.
+
 ## Parallel test runs
 
 `generate_inbox` runs locally — no network request, no collisions:
@@ -143,8 +158,8 @@ begin
   email = mail.wait_for_latest(inbox, timeout: 15)
 rescue ZeroDrop::TimeoutError
   # No email arrived — check your app is sending correctly
-rescue ZeroDrop::AuthError
-  # Invalid API key
+rescue ZeroDrop::AuthError => e
+  # The inbox belongs to another key's prefix, or your key is wrong — e.message says which
 rescue ZeroDrop::NetworkError => e
   # Transport failure — e.message includes status page link
 end
@@ -166,8 +181,9 @@ mail = ZeroDrop::Client.new(base_url: "https://your-instance.yourdomain.com")
 
 | Method | Description |
 |---|---|
-| `Client.new(api_key: nil, base_url: ...)` | Create a client. No args = free sandbox mode. |
-| `#generate_inbox` | Instant inbox address. No network request. |
+| `Client.new(api_key: nil, base_url: ...)` | Create a client. `api_key` defaults to `ENV["ZERODROP_API_KEY"]`; without a key, inboxes are public to anyone who knows the name. |
+| `#generate_inbox` | Instant inbox address. No network request. With a key, the name starts with your prefix. |
+| `#prefix` | Your key's inbox prefix (`"k7x2"`), or `nil` without a key. |
 | `#fetch_latest(inbox, filter: nil)` | Latest matching email or nil. |
 | `#wait_for_latest(inbox, timeout: 10, poll_interval: 2, filter: nil)` | Block until email arrives. |
 
@@ -181,6 +197,7 @@ mail = ZeroDrop::Client.new(base_url: "https://your-instance.yourdomain.com")
 | Email filtering | ✓ | ✓ |
 | Email retention | 30 min | Extended |
 | Custom domains | ✗ | ✓ |
+| API key | ✓ free at [zerodrop.dev/keys](https://zerodrop.dev/keys) | ✓ |
 
 Get a Workspace at [zerodrop.dev](https://zerodrop.dev)
 

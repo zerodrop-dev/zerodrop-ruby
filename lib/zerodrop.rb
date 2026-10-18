@@ -22,6 +22,18 @@ module ZeroDrop
   FREE_DOMAIN = "zerodrop-sandbox.online"
   ADJECTIVES = %w[swift dark cold null void zero dead raw base core].freeze
 
+  # A free key from https://zerodrop.dev/keys: zd_<prefix>_<32 letters/digits>.
+  # Inboxes named <prefix>-... can be read only with that key.
+  KEY_FORMAT = /\Azd_([a-z0-9]{4})_[A-Za-z0-9]{32}\z/
+
+  # A key goes into an HTTP header, so after trimming it may hold only visible
+  # ASCII. Anything else is refused without echoing the key.
+  KEY_CHARS = /\A[\x21-\x7e]+\z/
+
+  # Whitespace around a key, including the no-break spaces and byte-order
+  # marks that copying and pasting can bring along.
+  KEY_PADDING = /\A[[:space:]\0\u{FEFF}]+|[[:space:]\0\u{FEFF}]+\z/
+
   # Raised when no email arrives within the timeout.
   class TimeoutError < StandardError
     def initialize(inbox, timeout)
@@ -30,10 +42,11 @@ module ZeroDrop
     end
   end
 
-  # Raised when an invalid API key is provided.
+  # Raised on a 401: the inbox belongs to an account's prefix and the request
+  # had no key or the wrong one. The message carries the server's reason.
   class AuthError < StandardError
-    def initialize
-      super("invalid or missing API key")
+    def initialize(detail = nil)
+      super(detail || "invalid or missing API key")
     end
   end
 
@@ -74,21 +87,38 @@ module ZeroDrop
 
   # The ZeroDrop API client.
   class Client
-    # @param api_key [String, nil] Workspace API key. Omit for free sandbox mode.
+    # Your key's inbox prefix ("k7x2"), or nil without a key.
+    attr_reader :prefix
+
+    # @param api_key [String, nil] Free API key from https://zerodrop.dev/keys.
+    #   Defaults to ENV["ZERODROP_API_KEY"]. Without a key, anyone who knows
+    #   an inbox's name can read it.
     # @param base_url [String] Override for self-hosted instances.
+    # @raise [ArgumentError] if the key holds a character that can't be sent in
+    #   an HTTP header (a line break, a byte-order mark...)
     def initialize(api_key: nil, base_url: DEFAULT_BASE_URL)
-      @api_key = api_key
+      key = trim_key(api_key)
+      key = trim_key(ENV.fetch("ZERODROP_API_KEY", "")) if key.empty?
+      unless key.empty? || key.match?(KEY_CHARS)
+        raise ArgumentError, "ZeroDrop: the API key contains a character that can't be sent in an HTTP header, " \
+                             "such as a line break or a byte-order mark. Copy it again from https://zerodrop.dev/keys."
+      end
+      @api_key = key.empty? ? nil : key
+      @prefix = KEY_FORMAT.match(@api_key.to_s)&.[](1)
       @base_url = base_url.chomp("/")
     end
 
     # Returns a ready-to-use email address instantly.
-    # No network request is made.
+    # No network request is made. With a key, the name starts with your prefix.
     #
-    # @return [String] e.g. "swift-x7k29ab@zerodrop-sandbox.online"
+    # @return [String] e.g. "swift-x7k29ab@zerodrop-sandbox.online",
+    #   or "k7x2-swift-x7k29ab@zerodrop-sandbox.online" with the key zd_k7x2_...
     def generate_inbox
       adjective = ADJECTIVES.sample
       suffix = SecureRandom.alphanumeric(7).downcase
-      "#{adjective}-#{suffix}@#{FREE_DOMAIN}"
+      name = "#{adjective}-#{suffix}"
+      name = "#{@prefix}-#{name}" if @prefix
+      "#{name}@#{FREE_DOMAIN}"
     end
 
     # Returns the newest email matching the filter, or nil.
@@ -101,7 +131,7 @@ module ZeroDrop
       uri = URI("#{@base_url}/api/inbox/#{name}?source=ruby-sdk")
 
       res = http_get(uri)
-      raise AuthError if res.code == "401"
+      raise AuthError.new(error_detail(res)) if res.code == "401"
       raise NetworkError, "API returned #{res.code}" unless res.code == "200"
 
       payload = JSON.parse(res.body)
@@ -142,6 +172,16 @@ module ZeroDrop
 
     private
 
+    # ENV strings can arrive as binary or US-ASCII (no UTF-8 locale), so the
+    # bytes are read as UTF-8 before trimming.
+    def trim_key(value)
+      text = value.to_s.dup.force_encoding(Encoding::UTF_8)
+      return text.gsub(KEY_PADDING, "") if text.valid_encoding?
+
+      # Not UTF-8: a plain strip, and the character check refuses it.
+      value.to_s.b.strip
+    end
+
     def http_get(uri)
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = uri.scheme == "https"
@@ -153,6 +193,15 @@ module ZeroDrop
       req["User-Agent"] = "zerodrop-ruby/#{VERSION}"
 
       http.request(req)
+    end
+
+    # The server explains a 401 in its JSON body; pass that on.
+    def error_detail(res)
+      body = JSON.parse(res.body.to_s)
+      detail = body["error"] if body.is_a?(Hash)
+      detail.is_a?(String) ? detail : nil
+    rescue JSON::ParserError, TypeError
+      nil
     end
 
     def build_email(raw)
