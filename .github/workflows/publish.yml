@@ -9,6 +9,7 @@ jobs:
   publish:
     name: Build & Push Gem
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write
       id-token: write
