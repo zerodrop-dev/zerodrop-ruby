@@ -53,6 +53,20 @@ module ZeroDrop
   # Raised on transport-level failures.
   class NetworkError < StandardError; end
 
+  # Raised when ZeroDrop held the email: without an API key, one sender can
+  # reach only a few different inboxes a day, and past that the inbox gets a
+  # notice instead of the email. The message carries the server's reason.
+  class HeldError < StandardError
+    DEFAULT = "ZeroDrop held the email sent to this inbox: without an API key, one sender can " \
+              "reach only a few different inboxes a day. Get a free key at https://zerodrop.dev/keys " \
+              "and set ZERODROP_API_KEY."
+
+    def initialize(reason = nil)
+      reason = reason.strip if reason.is_a?(String)
+      super(reason.is_a?(String) && !reason.empty? ? reason : DEFAULT)
+    end
+  end
+
   # A caught email with auto-extracted fields.
   Email = Struct.new(
     :id, :from, :to, :subject, :body, :raw_body, :received_at,
@@ -126,6 +140,8 @@ module ZeroDrop
     # @param inbox [String] inbox address or name
     # @param filter [ZeroDrop::Filter, nil]
     # @return [ZeroDrop::Email, nil]
+    # @raise [ZeroDrop::HeldError] if no email matches and the inbox has a
+    #   notice that ZeroDrop held an email
     def fetch_latest(inbox, filter: nil)
       name = inbox_name(inbox)
       uri = URI("#{@base_url}/api/inbox/#{name}?source=ruby-sdk")
@@ -137,10 +153,19 @@ module ZeroDrop
       payload = JSON.parse(res.body)
       emails = payload.fetch("emails", [])
 
+      # A notice of held mail is never returned as an email; if nothing
+      # matches, it explains why.
+      notice = nil
       emails.each do |raw|
+        if notice?(raw)
+          notice ||= raw
+          next
+        end
         email = build_email(raw)
         return email if filter.nil? || filter.matches?(email)
       end
+      raise HeldError.new(notice["reason"]) if notice
+
       nil
     rescue JSON::ParserError => e
       raise NetworkError, "invalid response: #{e.message}"
@@ -157,6 +182,7 @@ module ZeroDrop
     # @param filter [ZeroDrop::Filter, nil]
     # @return [ZeroDrop::Email]
     # @raise [ZeroDrop::TimeoutError] if nothing arrives in time
+    # @raise [ZeroDrop::HeldError] at once, if ZeroDrop held the email
     def wait_for_latest(inbox, timeout: 10, poll_interval: 2, filter: nil)
       deadline = Time.now + timeout
 
@@ -202,6 +228,11 @@ module ZeroDrop
       detail.is_a?(String) ? detail : nil
     rescue JSON::ParserError, TypeError
       nil
+    end
+
+    # A notice that ZeroDrop held an email, rather than an email.
+    def notice?(raw)
+      raw.is_a?(Hash) && raw["held"] == true
     end
 
     def build_email(raw)

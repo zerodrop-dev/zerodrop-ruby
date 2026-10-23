@@ -11,7 +11,7 @@ Gem::Specification.new do |spec|
   spec.summary = "Disposable email inboxes for testing auth flows in CI — OTPs and magic links auto-extracted."
   spec.description = "ZeroDrop catches verification emails at Cloudflare's edge and auto-extracts " \
                      "OTP codes and magic links. Test email verification, magic links, OTP and " \
-                     "password reset flows in RSpec, Minitest or Capybara — no regex, no Docker, no signup."
+                     "password reset flows in RSpec, Minitest or Capybara — no regex, no Docker, no signup to try."
   spec.homepage = "https://zerodrop.dev"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.0"

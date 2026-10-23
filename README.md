@@ -6,7 +6,7 @@
 
 Email verification infrastructure for CI pipelines.
 
-Send a verification email. Catch it at the edge. Get `email.otp` and `email.magic_link` back — auto-extracted, no regex, no Docker, no signup.
+Send a verification email. Catch it at the edge. Get `email.otp` and `email.magic_link` back — auto-extracted, no regex, no Docker, no signup to try.
 
 ```ruby
 email = mail.wait_for_latest(inbox, timeout: 15)
@@ -128,7 +128,7 @@ expect(page).to have_current_path("/dashboard")
 
 ## Free API key (private inboxes)
 
-Without a key, anyone who knows an inbox's name can read it. With a free key, your inboxes start with your own prefix and only your key can read them.
+Without a key, anyone who knows an inbox's name can read it, and one sender can reach only 5 different inboxes a day. With a free key, your inboxes start with your own prefix, only your key can read them, and mail to them isn't limited.
 
 1. Sign in with GitHub at [zerodrop.dev/keys](https://zerodrop.dev/keys) and create a key.
 2. Set it as `ZERODROP_API_KEY`. The client reads it automatically, or you can pass `api_key:`.
@@ -139,7 +139,7 @@ mail.generate_inbox
 # => "k7x2-swift-x7k29ab@zerodrop-sandbox.online", where k7x2 is your prefix
 ```
 
-Reading a `k7x2-…` inbox without your key raises `ZeroDrop::AuthError` with the reason. `mail.prefix` holds your prefix if you build an address yourself. A key holding a character that can't be sent in an HTTP header (a line break, a byte-order mark) makes `ZeroDrop::Client.new` raise `ArgumentError`; the message never includes the key.
+Reading a `k7x2-…` inbox without your key raises `ZeroDrop::AuthError` with the reason. Without a key, if ZeroDrop held an email because its sender passed the daily limit, the inbox gets a notice instead, and `fetch_latest` and `wait_for_latest` raise `ZeroDrop::HeldError` saying so (0.3.0 or later; older versions return the notice as if it were the email, or time out when a filter skips it). `mail.prefix` holds your prefix if you build an address yourself. A key holding a character that can't be sent in an HTTP header (a line break, a byte-order mark) makes `ZeroDrop::Client.new` raise `ArgumentError`; the message never includes the key.
 
 ## Parallel test runs
 
@@ -151,6 +151,8 @@ Reading a `k7x2-…` inbox without your key raises `ZeroDrop::AuthError` with th
 inbox = mail.generate_inbox # unique every call
 ```
 
+Mail to many inboxes a day needs a free API key: without one, one sender can reach only 5 different inboxes a day.
+
 ## Error handling
 
 ```ruby
@@ -158,6 +160,9 @@ begin
   email = mail.wait_for_latest(inbox, timeout: 15)
 rescue ZeroDrop::TimeoutError
   # No email arrived — check your app is sending correctly
+rescue ZeroDrop::HeldError => e
+  # Without an API key, the sender passed the daily limit (5 different inboxes a day) —
+  # e.message says so; a free key from https://zerodrop.dev/keys lifts it
 rescue ZeroDrop::AuthError => e
   # The inbox belongs to another key's prefix, or your key is wrong — e.message says which
 rescue ZeroDrop::NetworkError => e
@@ -184,8 +189,8 @@ mail = ZeroDrop::Client.new(base_url: "https://your-instance.yourdomain.com")
 | `Client.new(api_key: nil, base_url: ...)` | Create a client. `api_key` defaults to `ENV["ZERODROP_API_KEY"]`; without a key, inboxes are public to anyone who knows the name. |
 | `#generate_inbox` | Instant inbox address. No network request. With a key, the name starts with your prefix. |
 | `#prefix` | Your key's inbox prefix (`"k7x2"`), or `nil` without a key. |
-| `#fetch_latest(inbox, filter: nil)` | Latest matching email or nil. |
-| `#wait_for_latest(inbox, timeout: 10, poll_interval: 2, filter: nil)` | Block until email arrives. |
+| `#fetch_latest(inbox, filter: nil)` | Latest matching email or nil. Raises `HeldError` if nothing matches and the inbox has a notice that ZeroDrop held an email. |
+| `#wait_for_latest(inbox, timeout: 10, poll_interval: 2, filter: nil)` | Block until email arrives. Raises `TimeoutError` on timeout, and `HeldError` at once if ZeroDrop held the email. |
 
 ## Free vs Workspace
 
@@ -198,6 +203,7 @@ mail = ZeroDrop::Client.new(base_url: "https://your-instance.yourdomain.com")
 | Email retention | 30 min | Extended |
 | Custom domains | ✗ | ✓ |
 | API key | ✓ free at [zerodrop.dev/keys](https://zerodrop.dev/keys) | ✓ |
+| Daily limit per sender | 5 inboxes without a key, none with one | None |
 
 Get a Workspace at [zerodrop.dev](https://zerodrop.dev)
 
