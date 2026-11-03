@@ -34,6 +34,9 @@ module ZeroDrop
   # marks that copying and pasting can bring along.
   KEY_PADDING = /\A[[:space:]\0\u{FEFF}]+|[[:space:]\0\u{FEFF}]+\z/
 
+  # A Workspace's own domain, from the domain: option or ZERODROP_DOMAIN.
+  HOST_NAME = /\A(?=.{1,253}\z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})\z/
+
   # Raised when no email arrives within the timeout.
   class TimeoutError < StandardError
     def initialize(inbox, timeout)
@@ -104,13 +107,22 @@ module ZeroDrop
     # Your key's inbox prefix ("k7x2"), or nil without a key.
     attr_reader :prefix
 
+    # The domain generated addresses use: your Workspace's, or
+    # zerodrop-sandbox.online.
+    attr_reader :domain
+
     # @param api_key [String, nil] Free API key from https://zerodrop.dev/keys.
     #   Defaults to ENV["ZERODROP_API_KEY"]. Without a key, anyone who knows
     #   an inbox's name can read it.
     # @param base_url [String] Override for self-hosted instances.
+    # @param domain [String, nil] Your Workspace's own domain, such as
+    #   "yourcompany-qa.com". Generated addresses use it, and its inboxes are
+    #   read with your key. Defaults to ENV["ZERODROP_DOMAIN"], then the shared
+    #   zerodrop-sandbox.online.
     # @raise [ArgumentError] if the key holds a character that can't be sent in
-    #   an HTTP header (a line break, a byte-order mark...)
-    def initialize(api_key: nil, base_url: DEFAULT_BASE_URL)
+    #   an HTTP header (a line break, a byte-order mark...), or if the domain
+    #   isn't a domain name
+    def initialize(api_key: nil, base_url: DEFAULT_BASE_URL, domain: nil)
       key = trim_key(api_key)
       key = trim_key(ENV.fetch("ZERODROP_API_KEY", "")) if key.empty?
       unless key.empty? || key.match?(KEY_CHARS)
@@ -120,6 +132,12 @@ module ZeroDrop
       @api_key = key.empty? ? nil : key
       @prefix = KEY_FORMAT.match(@api_key.to_s)&.[](1)
       @base_url = base_url.chomp("/")
+      @domain = resolve_domain(domain)
+
+      if @domain != FREE_DOMAIN && @prefix.nil?
+        warn "[ZeroDrop] Inboxes on #{@domain} belong to your Workspace and can be read only with its API key " \
+             "(zd_xxxx_… from https://zerodrop.dev/keys). Set ZERODROP_API_KEY."
+      end
     end
 
     # Returns a ready-to-use email address instantly.
@@ -132,7 +150,7 @@ module ZeroDrop
       suffix = SecureRandom.alphanumeric(7).downcase
       name = "#{adjective}-#{suffix}"
       name = "#{@prefix}-#{name}" if @prefix
-      "#{name}@#{FREE_DOMAIN}"
+      "#{name}@#{@domain}"
     end
 
     # Returns the newest email matching the filter, or nil.
@@ -208,6 +226,22 @@ module ZeroDrop
       value.to_s.b.strip
     end
 
+    # The receiving domain: the option, else ZERODROP_DOMAIN, else the shared
+    # one. Trimmed like the key, since it is copied and pasted the same way.
+    def resolve_domain(option)
+      value = trim_key(option)
+      value = trim_key(ENV.fetch("ZERODROP_DOMAIN", "")) if value.empty?
+      return FREE_DOMAIN if value.empty?
+
+      domain = value.downcase.delete_suffix(".")
+      unless domain.match?(HOST_NAME)
+        raise ArgumentError, "ZeroDrop: the domain: option (or ZERODROP_DOMAIN) isn't a domain name. " \
+                             "Use your Workspace's domain, such as yourcompany-qa.com."
+      end
+
+      domain
+    end
+
     def http_get(uri)
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = uri.scheme == "https"
@@ -269,9 +303,17 @@ module ZeroDrop
       body.length > 5000 ? body[0, 5000] : body
     end
 
+    # The inbox an address is read from: its local part. On your Workspace's
+    # own domain, mail is filed under your key's prefix, so an address you
+    # named yourself, such as qa@yourcompany-qa.com, is read as k7x2-qa.
     def inbox_name(inbox)
-      name = inbox.include?("@") ? inbox.split("@").first : inbox
-      name.downcase
+      local = inbox.partition("@").first.downcase
+      return local unless inbox.include?("@") && @prefix && @domain != FREE_DOMAIN
+
+      domain = inbox.rpartition("@").last.downcase.delete_suffix(".")
+      return local if domain != @domain || local.start_with?("#{@prefix}-")
+
+      "#{@prefix}-#{local}"
     end
   end
 end

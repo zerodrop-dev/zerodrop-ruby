@@ -141,6 +141,19 @@ mail.generate_inbox
 
 Reading a `k7x2-…` inbox without your key raises `ZeroDrop::AuthError` with the reason. Without a key, if ZeroDrop held an email because its sender passed the daily limit, the inbox gets a notice instead, and `fetch_latest` and `wait_for_latest` raise `ZeroDrop::HeldError` saying so (0.3.0 or later; older versions return the notice as if it were the email, or time out when a filter skips it). `mail.prefix` holds your prefix if you build an address yourself. A key holding a character that can't be sent in an HTTP header (a line break, a byte-order mark) makes `ZeroDrop::Client.new` raise `ArgumentError`; the message never includes the key.
 
+## Workspace domain
+
+A Workspace receives mail on a domain of its own, such as `yourcompany-qa.com`, so sign-up forms that block disposable domains accept it. Every inbox on it can be read only with your key. Set the domain as `ZERODROP_DOMAIN`, or pass `domain:`, next to your key:
+
+```ruby
+mail = ZeroDrop::Client.new(api_key: ENV["ZERODROP_API_KEY"], domain: "yourcompany-qa.com")
+inbox = mail.generate_inbox
+# => "k7x2-swift-x7k29ab@yourcompany-qa.com"
+email = mail.wait_for_latest(inbox, timeout: 15)
+```
+
+Any address on the domain works, including one you name yourself: mail to `qa@yourcompany-qa.com` is filed under your prefix, and `mail.wait_for_latest("qa@yourcompany-qa.com")` reads it from there. `mail.domain` holds the domain in use. Workspaces are set up with the founder: [zerodrop.dev/pricing](https://zerodrop.dev/pricing).
+
 ## Parallel test runs
 
 `generate_inbox` runs locally — no network request, no collisions:
@@ -173,7 +186,7 @@ end
 ## Workspaces
 
 ```ruby
-mail = ZeroDrop::Client.new(api_key: ENV["ZERODROP_API_KEY"])
+mail = ZeroDrop::Client.new(api_key: ENV["ZERODROP_API_KEY"], domain: "yourcompany-qa.com")
 ```
 
 ## Self-hosted
@@ -186,9 +199,10 @@ mail = ZeroDrop::Client.new(base_url: "https://your-instance.yourdomain.com")
 
 | Method | Description |
 |---|---|
-| `Client.new(api_key: nil, base_url: ...)` | Create a client. `api_key` defaults to `ENV["ZERODROP_API_KEY"]`; without a key, inboxes are public to anyone who knows the name. |
+| `Client.new(api_key: nil, base_url: ..., domain: nil)` | Create a client. `api_key` defaults to `ENV["ZERODROP_API_KEY"]`; without a key, inboxes are public to anyone who knows the name. `domain` is your Workspace's own domain; it defaults to `ENV["ZERODROP_DOMAIN"]`, then the shared `zerodrop-sandbox.online`, and a value that isn't a domain name raises `ArgumentError`. |
 | `#generate_inbox` | Instant inbox address. No network request. With a key, the name starts with your prefix. |
 | `#prefix` | Your key's inbox prefix (`"k7x2"`), or `nil` without a key. |
+| `#domain` | The domain generated addresses use: your Workspace's, or `zerodrop-sandbox.online`. |
 | `#fetch_latest(inbox, filter: nil)` | Latest matching email or nil. Raises `HeldError` if nothing matches and the inbox has a notice that ZeroDrop held an email. |
 | `#wait_for_latest(inbox, timeout: 10, poll_interval: 2, filter: nil)` | Block until email arrives. Raises `TimeoutError` on timeout, and `HeldError` at once if ZeroDrop held the email. |
 
@@ -200,8 +214,8 @@ mail = ZeroDrop::Client.new(base_url: "https://your-instance.yourdomain.com")
 | OTP auto-extraction | ✓ | ✓ |
 | Magic link extraction | ✓ | ✓ |
 | Email filtering | ✓ | ✓ |
-| Email retention | 30 min | Extended |
-| Custom domains | ✗ | ✓ |
+| Email retention | 30 min | Up to 7 days, set for your team |
+| Custom domains | ✗ | ✓ (see [Workspace domain](#workspace-domain)) |
 | API key | ✓ free at [zerodrop.dev/keys](https://zerodrop.dev/keys) | ✓ |
 | Daily limit per sender | 5 inboxes without a key, none with one | None |
 
